@@ -1,0 +1,138 @@
+#include <avr/interrupt.h>  // Include AVR interrupt library for handling interrupts
+
+const int triggerPin = 9;    // Pin for HC-SR04 trigger
+const int echoPin = 10;      // Pin for HC-SR04 echo
+const int tempPin = A1;      // Pin for TMP36 temperature sensor
+const int lightPin = A2;     // Pin for photoresistor
+const int ledPin1 = 12;      // Pin for the first LED
+const int ledPin2 = 13;      // Pin for the second LED
+
+// Volatile variables used in interrupt service routines (ISRs) and main loop
+volatile bool measureDistance = false;    // Flag to indicate when to measure distance
+volatile bool readLight = false;         // Flag to indicate when to read light value
+volatile bool readTemperature = false;   // Flag to indicate when to read temperature
+volatile float measuredDistance = 0.0;   // Measured distance from HC-SR04
+volatile int lightValue = 0;              // Measured light value from photoresistor
+float temperature = 0.0;                  // Measured temperature from TMP36
+
+void setup() {
+  // Set pin modes for inputs and outputs
+  pinMode(triggerPin, OUTPUT);    // Trigger pin of HC-SR04 as OUTPUT
+  pinMode(echoPin, INPUT);        // Echo pin of HC-SR04 as INPUT
+  pinMode(tempPin, INPUT);        // TMP36 temperature sensor pin as INPUT
+  pinMode(lightPin, INPUT);       // Photoresistor pin as INPUT
+  pinMode(ledPin1, OUTPUT);       // First LED pin as OUTPUT
+  pinMode(ledPin2, OUTPUT);       // Second LED pin as OUTPUT
+
+  Serial.begin(9600);            // Initialize serial communication at 9600 baud
+
+  // Configure Pin Change Interrupts for analog pins A0-A5
+  PCICR |= (1 << PCIE1);         // Enable pin change interrupt for group 1 (A0-A5)
+  PCMSK1 |= (1 << PCINT10);      // Enable interrupt for A2 (Pin Change Interrupt 10)
+
+  // Configure Pin Change Interrupts for digital pins D8-D13
+  PCICR |= (1 << PCIE0);         // Enable pin change interrupt for group 0 (D8-D13)
+  PCMSK0 |= (1 << PCINT2);       // Enable interrupt for D10 (Pin Change Interrupt 2)
+
+  noInterrupts();                // Disable all interrupts during setup to ensure configuration is complete
+
+  // Timer1 configuration for periodic interrupts
+  TCCR1A = 0;                    // Set Timer1 to normal mode
+  TCCR1B = 0;                    
+  TCNT1 = 0;                     // Initialize Timer1 counter to 0
+  TCCR1B |= (1 << CS12);         // Set Timer1 prescaler to 256 (CS12 bit set)
+  OCR1A = 15624;                 // Set compare match register value for 1 second at 16MHz clock
+  TIMSK1 |= (1 << OCIE1A);       // Enable Timer1 compare match interrupt
+  interrupts();                  // Enable all interrupts
+}
+
+void loop() {
+  // Check if distance measurement flag is set
+  if (measureDistance) {
+    measureDistance = false;    // Reset the flag
+
+    // Trigger the HC-SR04 sensor to measure distance
+    digitalWrite(triggerPin, LOW);
+    delayMicroseconds(2);       // Wait 2 microseconds
+    digitalWrite(triggerPin, HIGH);
+    delayMicroseconds(10);      // Wait 10 microseconds
+    digitalWrite(triggerPin, LOW);
+
+    // Read the duration of the echo pulse
+    long pulseDuration = pulseIn(echoPin, HIGH);
+    measuredDistance = (pulseDuration / 2.0) * 0.0344;  // Calculate distance in cm
+
+    // Print the measured distance to the Serial Monitor
+    Serial.print("Measured Distance: ");
+    Serial.print(measuredDistance);
+    Serial.println(" cm");
+
+    // Check if the measured distance is approximately 26.1 cm
+    if (abs(measuredDistance - 26.1) < 1.0) {
+      blinkLED(ledPin1, 3);    // Blink LED1 three times
+    }
+  }
+
+  // Check if temperature reading flag is set
+  if (readTemperature) {
+    readTemperature = false;    // Reset the flag
+    int sensorValue = analogRead(tempPin);  // Read the temperature sensor value
+    temperature = (sensorValue * 5.0 / 1024.0) * 100.0;  // Convert to temperature in Celsius
+
+    // Print the temperature to the Serial Monitor
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" C");
+
+    // Check if the temperature is approximately 74.1°C
+    if (abs(temperature - 74.1) < 1.0) {
+      blinkLED(ledPin2, 3);    // Blink LED2 three times
+    }
+  }
+
+  // Check if light reading flag is set
+  if (readLight) {
+    readLight = false;    // Reset the flag
+    lightValue = analogRead(lightPin);  // Read the light sensor value
+
+    // Print the ambient light value to the Serial Monitor
+    Serial.print("Ambient Light: ");
+    Serial.println(lightValue);
+
+    int threshold = 500;  // Define a threshold for light value
+    if (lightValue < threshold) {
+      blinkLED(ledPin2, 3);    // Blink LED2 three times if light value is below threshold
+    }
+  }
+
+  delay(100); // Short pause before the next measurement
+}
+
+// Function to blink an LED a specified number of times
+void blinkLED(int pin, int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(pin, HIGH);   // Turn LED on
+    delay(500);                // Wait 500 milliseconds
+    digitalWrite(pin, LOW);    // Turn LED off
+    delay(500);                // Wait 500 milliseconds
+  }
+}
+
+// Interrupt Service Routine (ISR) for Pin Change Interrupts (PCINT) for analog pins A0-A5
+ISR(PCINT1_vect) {
+  if (PINC & (1 << PINC2)) {  // Check if A2 triggered the interrupt
+    readLight = true;        // Set flag to read light sensor
+  }
+}
+
+// Interrupt Service Routine (ISR) for Pin Change Interrupts (PCINT) for digital pins D8-D13
+ISR(PCINT0_vect) {
+  if (PINB & (1 << PINB2)) {  // Check if D10 triggered the interrupt
+    measureDistance = true;  // Set flag to measure distance
+  }
+}
+
+// Timer1 Interrupt Service Routine (ISR) for periodic temperature reading
+ISR(TIMER1_COMPA_vect) {
+  readTemperature = true;    // Set flag to read temperature sensor
+}
